@@ -1,0 +1,4 @@
+# Add these to your existing requirements.txt - all new for the reliability work
+alembic==1.13.2
+celery==5.4.0
+redis==5.0.8

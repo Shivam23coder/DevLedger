@@ -1,0 +1,50 @@
+# ==== Secrets - NEVER commit these ====
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env.local
+
+# ==== Python (backend) ====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Alembic - keep the migration scripts, ignore local sqlite test artifacts only
+backend/_migration_test.db
+backend/*.db
+backend/*.db-journal
+
+# ==== Node / Next.js (frontend) ====
+node_modules/
+.next/
+out/
+next-env.d.ts
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ==== Docker ====
+# (docker-compose.yml itself should be committed - only local volume data is ignored,
+# and that lives inside the named Docker volume, not the repo, so nothing extra needed here)
+
+# ==== OS / Editor ====
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# ==== Logs ====
+*.log

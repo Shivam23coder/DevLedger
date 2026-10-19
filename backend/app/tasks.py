@@ -33,31 +33,37 @@ def _extract_username_from_url(url: str | None) -> str | None:
 
 
 async def _run_pipeline(github_username: str, resume_bytes: bytes) -> dict:
+    # 1. Parse resume first (in-memory CPU parsing, ~20ms)
+    resume_data = parse_resume(resume_bytes)
+    claimed_skills = resume_data["claimed_skills"]
+    skill_details = resume_data.get("skill_details", [])
+    detected_links = resume_data["detected_links"]
+
+    leetcode_url = detected_links.get("leetcode")
+    codeforces_url = detected_links.get("codeforces")
+    codechef_url = detected_links.get("codechef")
+
+    leetcode_user = _extract_username_from_url(leetcode_url)
+    codeforces_user = _extract_username_from_url(codeforces_url)
+    codechef_user = _extract_username_from_url(codechef_url)
+
+    # 2. Concurrently fetch GitHub repositories and DSA coding profiles in parallel
     async with httpx.AsyncClient() as client:
-        repos = await analyze_user(github_username, client=client, limit=10)
+        async def _safe_analyze_dsa():
+            try:
+                return await analyze_dsa(leetcode_user, codeforces_user, codechef_user, client)
+            except Exception as e:
+                print(f"DSA analysis failed: {e}")
+                return {"leetcode": None, "codeforces": None, "codechef": None}
 
-        resume_data = parse_resume(resume_bytes)
-        claimed_skills = resume_data["claimed_skills"]
-        skill_details = resume_data.get("skill_details", [])
-        detected_links = resume_data["detected_links"]
+        repos, dsa_evidence = await asyncio.gather(
+            analyze_user(github_username, client=client, fetch_limit=5, top_n=5),
+            _safe_analyze_dsa(),
+        )
 
-        leetcode_url = detected_links.get("leetcode")
-        codeforces_url = detected_links.get("codeforces")
-        codechef_url = detected_links.get("codechef")
-
-        leetcode_user = _extract_username_from_url(leetcode_url)
-        codeforces_user = _extract_username_from_url(codeforces_url)
-        codechef_user = _extract_username_from_url(codechef_url)
-
-        dsa_evidence = {"leetcode": None, "codeforces": None, "codechef": None}
-        try:
-            dsa_evidence = await analyze_dsa(leetcode_user, codeforces_user, codechef_user, client)
-        except Exception as e:
-            print(f"DSA analysis failed: {e}")
-
-    gaps = find_gaps(claimed_skills, repos, dsa_evidence)
-    unverified_skills = find_unverified(claimed_skills)
-    narrative_advice = generate_narrative_advice(gaps, repos, claimed_skills)
+        gaps = find_gaps(claimed_skills, repos, dsa_evidence)
+        unverified_skills = find_unverified(claimed_skills)
+        narrative_advice = await generate_narrative_advice(gaps, repos, claimed_skills, client=client)
 
     return {
         "github_username": github_username,
@@ -92,9 +98,10 @@ def _persist(result: dict) -> None:
             db.flush()
 
         profile.linkedin_url = result["detected_links"].get("linkedin")
-        profile.leetcode_username = result["leetcode_url"]
-        profile.codeforces_username = result["codeforces_url"]
-        profile.codechef_username = result["codechef_url"]
+        # Store the extracted username (not the full URL) so it displays correctly
+        profile.leetcode_username = _extract_username_from_url(result["leetcode_url"])
+        profile.codeforces_username = _extract_username_from_url(result["codeforces_url"])
+        profile.codechef_username = _extract_username_from_url(result["codechef_url"])
 
         evidenced_count = len(result["claimed_skills"]) - len(result["gaps"]) - len(result["unverified_skills"])
 
@@ -141,10 +148,22 @@ def _persist(result: dict) -> None:
         db.close()
 
 
+async def run_pipeline_async(github_username: str, resume_bytes: bytes) -> dict:
+    result = await _run_pipeline(github_username, resume_bytes)
+    try:
+        _persist(result)
+    except Exception as e:
+        print(f"DB persistence skipped/warning: {e}")
+    return {k: v for k, v in result.items() if k not in ("leetcode_url", "codeforces_url", "codechef_url")}
+
+
 @celery_app.task(name="analyze_profile_task")
 def analyze_profile_task(github_username: str, resume_b64: str) -> dict:
     resume_bytes = base64.b64decode(resume_b64)
     result = asyncio.run(_run_pipeline(github_username, resume_bytes))
-    _persist(result)
+    try:
+        _persist(result)
+    except Exception as e:
+        print(f"DB persistence skipped/warning: {e}")
     # Strip internal-only keys before returning to the client
     return {k: v for k, v in result.items() if k not in ("leetcode_url", "codeforces_url", "codechef_url")}

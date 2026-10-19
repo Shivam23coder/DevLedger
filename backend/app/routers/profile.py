@@ -6,12 +6,17 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.celery_app import celery_app
-from app.tasks import analyze_profile_task
+from app.tasks import analyze_profile_task, run_pipeline_async
 from app.services.gap_detector import find_unverified
 from app.models import Profile, AnalysisRun
 from app.schemas import ProfileAnalysisOut, HistoryEntryOut
 
 router = APIRouter(prefix="/profile", tags=["profile"])
+
+
+import uuid
+
+SYNC_JOB_RESULTS: dict = {}
 
 
 @router.post("/analyze", status_code=202)
@@ -33,13 +38,34 @@ async def analyze_profile(
     pdf_bytes = await resume.read()
     resume_b64 = base64.b64encode(pdf_bytes).decode("ascii")
 
-    task = analyze_profile_task.delay(github_username, resume_b64)
-    return {"job_id": task.id, "status": "queued"}
+    # Check if a Celery worker is actually online to process the task
+    has_workers = False
+    try:
+        workers = celery_app.control.ping(timeout=0.3)
+        has_workers = bool(workers)
+    except Exception:
+        has_workers = False
+
+    if has_workers:
+        try:
+            task = analyze_profile_task.delay(github_username, resume_b64)
+            return {"job_id": task.id, "status": "queued"}
+        except Exception:
+            pass
+
+    # Graceful fallback: execute directly if Celery worker is not active
+    job_id = f"sync-{uuid.uuid4()}"
+    res_data = await run_pipeline_async(github_username, pdf_bytes)
+    SYNC_JOB_RESULTS[job_id] = res_data
+    return {"job_id": job_id, "status": "queued"}
 
 
 @router.get("/analyze/status/{job_id}")
 def get_analysis_status(job_id: str):
     """Poll this after POST /profile/analyze to get the result once ready."""
+    if job_id in SYNC_JOB_RESULTS:
+        return {"status": "success", "result": SYNC_JOB_RESULTS[job_id]}
+
     result = AsyncResult(job_id, app=celery_app)
 
     if result.state == "PENDING":

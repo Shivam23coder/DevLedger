@@ -1,9 +1,48 @@
 import asyncio
+import json
 import logging
 import random
 import httpx
+import redis.asyncio as aioredis
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Initialize Redis client (graceful fallback if connection fails or URL not provided)
+redis_client = None
+if settings.redis_url:
+    try:
+        redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
+    except Exception as e:
+        logger.error(f"Failed to initialize Redis client in dsa_agent at {settings.redis_url}: {e}")
+
+
+async def _get_cached_dsa(key: str) -> dict | None:
+    global redis_client
+    if not redis_client:
+        return None
+    try:
+        cached = await redis_client.get(key)
+        if cached:
+            logger.info(f"Cache hit for DSA: {key}")
+            return json.loads(cached)
+    except Exception as e:
+        logger.warning(f"Redis unavailable ({e}). Disabling DSA cache for this session.")
+        redis_client = None
+    return None
+
+
+async def _cache_dsa(key: str, data: dict, ttl: int = 86400):
+    global redis_client
+    if not redis_client or not data:
+        return
+    try:
+        await redis_client.setex(key, ttl, json.dumps(data))
+        logger.info(f"Cached DSA data for: {key}")
+    except Exception as e:
+        logger.warning(f"Redis unavailable ({e}). Disabling DSA cache for this session.")
+        redis_client = None
 
 
 async def _request_with_retry(client: httpx.AsyncClient, method: str, url: str, **kwargs) -> httpx.Response | None:
@@ -39,10 +78,16 @@ async def _request_with_retry(client: httpx.AsyncClient, method: str, url: str, 
             await asyncio.sleep(delay)
     return None
 
+
 async def fetch_codeforces_stats(client: httpx.AsyncClient, handle: str) -> dict | None:
     """Fetch user rating, rank, and solved languages/tags from Codeforces public REST API."""
     if not handle:
         return None
+
+    cache_key = f"dsa:codeforces:{handle.lower()}"
+    cached = await _get_cached_dsa(cache_key)
+    if cached:
+        return cached
         
     try:
         # 1. Fetch user info
@@ -92,7 +137,7 @@ async def fetch_codeforces_stats(client: httpx.AsyncClient, handle: str) -> dict
                             solved_problem_ids.add(prob_id)
                             solved_count += 1
 
-        return {
+        result = {
             "username": handle,
             "rating": user_info.get("rating"),
             "rank": user_info.get("rank"),
@@ -102,6 +147,8 @@ async def fetch_codeforces_stats(client: httpx.AsyncClient, handle: str) -> dict
             "languages": list(languages),
             "tags": list(tags)
         }
+        await _cache_dsa(cache_key, result)
+        return result
     except Exception as e:
         logger.error(f"Codeforces API analysis failed for {handle}: {e}")
         return None
@@ -131,6 +178,11 @@ async def fetch_leetcode_stats(client: httpx.AsyncClient, username: str) -> dict
     Wrapped in try-except to degrade gracefully if LeetCode blocks our requests."""
     if not username:
         return None
+
+    cache_key = f"dsa:leetcode:{username.lower()}"
+    cached = await _get_cached_dsa(cache_key)
+    if cached:
+        return cached
         
     url = "https://leetcode.com/graphql"
     query = """
@@ -196,12 +248,14 @@ async def fetch_leetcode_stats(client: httpx.AsyncClient, username: str) -> dict
                     # LeetCode language names normalize easily: "cpp" -> "C++", "python" -> "Python"
                     languages.append(_normalize_lc_language(lang))
 
-        return {
+        result = {
             "username": username,
             "solved_count": solved_count,
             "difficulty_solved": difficulty_solved,
             "languages": list(filter(None, languages))
         }
+        await _cache_dsa(cache_key, result)
+        return result
     except Exception as e:
         logger.error(f"LeetCode GraphQL query failed for {username}: {e}")
         return None
@@ -229,7 +283,12 @@ async def fetch_codechef_stats(client: httpx.AsyncClient, username: str) -> dict
     """Fetch CodeChef profile stats by scraping public page HTML."""
     if not username:
         return None
-        
+
+    cache_key = f"dsa:codechef:{username.lower()}"
+    cached = await _get_cached_dsa(cache_key)
+    if cached:
+        return cached
+
     url = f"https://www.codechef.com/users/{username}"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -309,7 +368,7 @@ async def fetch_codechef_stats(client: httpx.AsyncClient, username: str) -> dict
                         if val.isdigit():
                             solved_count += int(val)
 
-        return {
+        result = {
             "username": username,
             "rating": rating,
             "stars": stars,
@@ -317,6 +376,8 @@ async def fetch_codechef_stats(client: httpx.AsyncClient, username: str) -> dict
             "country_rank": country_rank,
             "solved_count": solved_count
         }
+        await _cache_dsa(cache_key, result)
+        return result
     except Exception as e:
         logger.error(f"CodeChef analysis failed for {username}: {e}")
         return None

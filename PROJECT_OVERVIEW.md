@@ -180,3 +180,40 @@ cp .env.local.example .env.local
 npm run dev
 ```
 *Open `http://localhost:3000` to interact with the dashboard.*
+
+<!-- --------- -->
+Terminal 1 — Backend
+unzip engineeros-v1.zip
+cd engineeros
+
+docker compose up -d
+<!-- -------- -->
+cd backend
+pip install alembic celery redis   # add to requirements.txt too
+alembic upgrade head               # creates all tables fresh
+
+# Terminal 1
+uvicorn app.main:app --reload
+# Terminal 2 (Windows needs --pool=solo, Celery's default prefork doesn't work there)
+celery -A app.celery_app worker --loglevel=info --pool=solo
+
+
+cd backend
+python3 -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
+
+pip install -r requirements.txt
+
+cp .env.example .env
+
+uvicorn app.main:app --reload
+
+<!-- -------- -->
+Terminal 2 — Frontend
+cd engineeros/frontend
+
+npm install
+
+cp .env.local.example .env.local
+
+npm run dev

@@ -12,6 +12,7 @@ import logging
 import random
 import httpx
 import redis.asyncio as aioredis
+from fastapi import HTTPException
 
 from app.config import settings
 
@@ -45,7 +46,13 @@ async def _get_with_retry(client: httpx.AsyncClient, url: str, **kwargs) -> http
     for attempt in range(max_retries + 1):
         try:
             resp = await client.get(url, headers=headers, **kwargs)
-            
+
+            # If token is invalid/expired (401), drop Authorization header and retry unauthenticated
+            if resp.status_code == 401 and "Authorization" in headers:
+                logger.warning(f"GitHub token returned 401 Unauthorized for {url}. Retrying unauthenticated...")
+                headers.pop("Authorization", None)
+                resp = await client.get(url, headers=headers, **kwargs)
+
             # Check if we should retry based on status code
             if resp.status_code in [429, 502, 503, 504]:
                 if attempt == max_retries:

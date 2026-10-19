@@ -10,15 +10,16 @@ NotImplemented stub at the bottom.
 # Maps a resume skill keyword to the evidence signals that would support it.
 # A skill "counts as evidenced" if ANY of its mapped signals is found in ANY repo.
 EVIDENCE_MAP: dict[str, dict] = {
-    "docker": {"languages": [], "topics": ["docker"], "keywords": ["docker"]},
+    "docker": {"dependencies": ["dockerfile"], "topics": ["docker"], "keywords": ["docker"]},
     "kubernetes": {"languages": [], "topics": ["kubernetes", "k8s"], "keywords": ["kubernetes", "k8s"]},
     "ci/cd": {"has_ci": True},
     "github actions": {"has_ci": True},
-    "redis": {"topics": ["redis"], "keywords": ["redis"]},
-    "postgresql": {"topics": ["postgresql", "postgres"], "keywords": ["postgres"]},
-    "mongodb": {"topics": ["mongodb"], "keywords": ["mongo"]},
-    "react": {"languages": ["JavaScript", "TypeScript"], "topics": ["react"], "keywords": ["react"]},
-    "graphql": {"topics": ["graphql"], "keywords": ["graphql"]},
+    "redis": {"dependencies": ["redis", "aioredis"], "topics": ["redis"], "keywords": ["redis"]},
+    "postgresql": {"dependencies": ["psycopg2", "psycopg", "asyncpg", "pg"], "topics": ["postgresql", "postgres"], "keywords": ["postgres"]},
+    "mongodb": {"dependencies": ["pymongo", "mongoose", "motor"], "topics": ["mongodb"], "keywords": ["mongo"]},
+    "react": {"dependencies": ["react", "react-dom"], "languages": ["JavaScript", "TypeScript"], "topics": ["react"], "keywords": ["react"]},
+    "next.js": {"dependencies": ["next"], "topics": ["nextjs", "next.js"], "keywords": ["nextjs", "next"]},
+    "graphql": {"dependencies": ["graphql", "apollo-server", "graphene-python"], "topics": ["graphql"], "keywords": ["graphql"]},
     "microservices": {"topics": ["microservices"], "keywords": ["microservice"]},
     # Languages map directly to the GitHub "languages" field or LeetCode/Codeforces languages
     "python": {"languages": ["Python"]},
@@ -28,11 +29,15 @@ EVIDENCE_MAP: dict[str, dict] = {
     "go": {"languages": ["Go"]},
     "rust": {"languages": ["Rust"]},
     "c++": {"languages": ["C++"]},
-    "flask": {"languages": ["Python"], "keywords": ["flask"]},
-    "fastapi": {"languages": ["Python"], "keywords": ["fastapi"]},
-    "kafka": {"topics": ["kafka"], "keywords": ["kafka"]},
-    "node.js": {"languages": ["JavaScript", "TypeScript"], "keywords": ["node"]},
-    "django": {"languages": ["Python"], "keywords": ["django"]},
+    "flask": {"dependencies": ["flask"], "languages": ["Python"], "keywords": ["flask"]},
+    "fastapi": {"dependencies": ["fastapi", "uvicorn"], "languages": ["Python"], "keywords": ["fastapi"]},
+    "django": {"dependencies": ["django"], "languages": ["Python"], "keywords": ["django"]},
+    "authentication": {"dependencies": ["pyjwt", "python-jose", "passlib", "bcrypt", "jsonwebtoken", "passport", "next-auth", "auth0", "firebase-admin"], "topics": ["auth", "authentication", "jwt", "oauth"], "keywords": ["auth", "jwt", "oauth", "login"]},
+    "machine learning": {"dependencies": ["torch", "pytorch", "tensorflow", "scikit-learn", "sklearn", "transformers", "openai", "langchain", "pandas", "numpy"], "topics": ["machine-learning", "deep-learning", "ml", "ai"], "keywords": ["machine learning", "neural network", "transformer"]},
+    "sqlalchemy": {"dependencies": ["sqlalchemy"], "topics": ["sqlalchemy", "orm"], "keywords": ["sqlalchemy"]},
+    "celery": {"dependencies": ["celery"], "topics": ["celery"], "keywords": ["celery"]},
+    "kafka": {"dependencies": ["kafka-python", "confluent-kafka"], "topics": ["kafka"], "keywords": ["kafka"]},
+    "node.js": {"dependencies": ["express", "nest", "fastify"], "languages": ["JavaScript", "TypeScript"], "keywords": ["node"]},
     # DSA and Competitive Programming Evidence
     "competitive programming": {"codeforces": True, "codechef": True},
     "algorithms": {"codeforces_solved": 5, "leetcode_solved": 10, "codechef_solved": 5, "topics": ["algorithms"], "keywords": ["algorithm"]},
@@ -44,6 +49,9 @@ SUGGESTIONS: dict[str, str] = {
     "docker": "Add a Dockerfile to one of your active repos to back this claim with evidence.",
     "ci/cd": "Add a GitHub Actions workflow to a repo - even a simple lint/test-on-push pipeline counts as evidence.",
     "redis": "Use Redis for caching in one project so there's a repo that backs this up.",
+    "fastapi": "Add FastAPI to a project repo along with a simple route handler to demonstrate REST API experience.",
+    "authentication": "Implement JWT or OAuth2 authentication in one of your project repos to verify auth experience.",
+    "machine learning": "Build a simple ML model using PyTorch or Scikit-Learn in a repository to back up your ML claims.",
     "competitive programming": "Create a Codeforces or CodeChef profile and participate in contests to demonstrate competitive programming skills.",
     "algorithms": "Solve at least 10 problems on LeetCode, 5 on Codeforces, or 5 on CodeChef to demonstrate active algorithmic problem solving.",
     "data structures": "Solve problems involving key data structures (trees, graphs, heaps) on LeetCode, Codeforces, or CodeChef to demonstrate practical understanding.",
@@ -51,8 +59,18 @@ SUGGESTIONS: dict[str, str] = {
 
 
 def _repo_matches_signal(repo: dict, signal: dict) -> bool:
-    if signal.get("has_ci") and repo.get("has_ci"):
+    if signal.get("has_ci") and (repo.get("has_ci") or repo.get("ci_status") in ["passing", "failing"]):
         return True
+
+    # Check dependencies extracted from manifests or build_configs (Dockerfile, Makefile, etc.)
+    repo_deps = [d.lower() for d in repo.get("dependencies", [])]
+    build_cfgs = [b.lower() for b in repo.get("build_configs", [])]
+    combined_deps = set(repo_deps + build_cfgs)
+
+    for dep in signal.get("dependencies", []):
+        dep_lower = dep.lower()
+        if any(dep_lower in d for d in combined_deps):
+            return True
 
     repo_languages_lower = [l.lower() for l in repo.get("languages", [])]
     for lang in signal.get("languages", []):

@@ -8,7 +8,7 @@ import httpx
 from app.config import settings
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-MODEL = "openai/gpt-oss-120b"  # llama-3.3-70b-versatile was deprecated June 17, 2026
+MODEL = "openai/gpt-oss-120b"
 
 
 def _build_prompt(gaps: list[dict], repos: list[dict], claimed_skills: list[str]) -> str:
@@ -36,9 +36,36 @@ restate the raw data back at them - synthesize it into one clear recommendation 
 build or learn next and why it matters. No preamble, no bullet points, just the advice."""
 
 
-def generate_narrative_advice(gaps: list[dict], repos: list[dict], claimed_skills: list[str]) -> str | None:
+def _generate_fallback_advice(gaps: list[dict], repos: list[dict], claimed_skills: list[str]) -> str:
+    repo_names = [r["name"] for r in repos[:3]]
+    repo_str = ", ".join(f"'{n}'" for n in repo_names) if repo_names else "your repositories"
+
+    languages = list({l for r in repos for l in r.get("languages", []) if l})
+    lang_str = ", ".join(languages[:3]) if languages else "software engineering"
+
+    gap_skills = [g["skill"] for g in gaps]
+
+    if gap_skills:
+        top_gaps = ", ".join(f"'{s}'" for s in gap_skills[:2])
+        target_repo = f"'{repo_names[0]}'" if repo_names else "your repositories"
+        return (
+            f"You have built projects in {lang_str} like {repo_str}. "
+            f"However, while your resume claims skills in {top_gaps}, your public repositories "
+            f"currently lack active package manifest or structural code evidence for them. "
+            f"Consider integrating {top_gaps} into an active project like {target_repo} "
+            f"to back up your resume claims with verifiable code."
+        )
+    else:
+        return (
+            f"Great job! Your analyzed repositories ({repo_str}) present clear code evidence "
+            f"supporting your claimed skills in {lang_str}. To elevate your profile further, "
+            f"consider adding automated CI/CD workflows and Docker configurations across your main projects."
+        )
+
+
+def generate_narrative_advice(gaps: list[dict], repos: list[dict], claimed_skills: list[str]) -> str:
     if not settings.groq_api_key:
-        return None  # no key configured - feature silently unavailable, not broken
+        return _generate_fallback_advice(gaps, repos, claimed_skills)
 
     try:
         response = httpx.post(
@@ -51,8 +78,11 @@ def generate_narrative_advice(gaps: list[dict], repos: list[dict], claimed_skill
             },
             timeout=30,
         )
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+        if response.status_code == 200:
+            content = response.json()["choices"][0]["message"]["content"]
+            if content and content.strip():
+                return content.strip()
     except Exception as e:
-        print(f"Narrative advisor failed: {e}")  # remove/comment out once confirmed working
-        return None
+        print(f"Groq API call warning: {e}")
+
+    return _generate_fallback_advice(gaps, repos, claimed_skills)

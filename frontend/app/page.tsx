@@ -1,6 +1,4 @@
 "use client";
-import HistoryChart from "@/components/HistoryChart";
-// import { analyzeProfile, fetchProfileHistory, ProfileAnalysis, HistoryEntry } from "@/lib/api";
 import { useState } from "react";
 import UploadForm from "@/components/UploadForm";
 import EvidenceLedger from "@/components/EvidenceLedger";
@@ -8,6 +6,7 @@ import RepoGrid from "@/components/RepoGrid";
 import SkillBreakdownChart from "@/components/SkillBreakdownChart";
 import NarrativeAdvice from "@/components/NarrativeAdvice";
 import DsaProfiles from "@/components/DsaProfiles";
+import HistoryChart from "@/components/HistoryChart";
 import { analyzeProfile, fetchProfileHistory, ProfileAnalysis, HistoryEntry } from "@/lib/api";
 
 export default function Home() {
@@ -103,6 +102,15 @@ export default function Home() {
                 unverifiedSkills={result.unverified_skills}
               />
             </section>
+
+            {history.length > 1 && (
+              <section>
+                <h2 className="font-mono text-xs uppercase tracking-wider text-muted mb-3">
+                  Gap Closure Over Time
+                </h2>
+                <HistoryChart history={history} />
+              </section>
+            )}
           </div>
         )}
       </div>
